@@ -15,12 +15,18 @@
         "title": "Loom",
         "width": 1280,
         "height": 800,
-        "decorations": true,
-        "resizable": true
+        "decorations": false,
+        "resizable": true,
+        "transparent": true
       }
     ],
     "security": {
       "csp": null
+    }
+  },
+  "plugins": {
+    "shell": {
+      "open": true
     }
   },
   "bundle": {
