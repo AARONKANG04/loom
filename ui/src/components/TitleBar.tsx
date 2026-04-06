@@ -2,14 +2,30 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 
 const appWindow = getCurrentWindow();
 
-export default function TitleBar() {
+interface TitleBarProps {
+  onOpenFolder?: () => void;
+}
+
+export default function TitleBar({ onOpenFolder }: TitleBarProps) {
   return (
     <div
       data-tauri-drag-region
       className="h-9 min-h-9 flex items-center justify-between bg-header border-b border-border select-none"
     >
-      <div data-tauri-drag-region className="flex-1 pl-3 text-[12px] font-medium text-text-muted">
-        Loom
+      <div data-tauri-drag-region className="flex-1 pl-3 flex items-center gap-2">
+        <span data-tauri-drag-region className="text-[12px] font-medium text-text-muted">Loom</span>
+        {onOpenFolder && (
+          <button
+            onClick={onOpenFolder}
+            className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-text-muted hover:text-text hover:bg-white/5 rounded cursor-pointer"
+            title="Open Folder"
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M1.5 14h13a.5.5 0 0 0 .5-.5V4a.5.5 0 0 0-.5-.5H7.71a.5.5 0 0 1-.36-.15L6.15 2.15a.5.5 0 0 0-.36-.15H1.5a.5.5 0 0 0-.5.5v11a.5.5 0 0 0 .5.5z" />
+            </svg>
+            <span>Open Folder</span>
+          </button>
+        )}
       </div>
       <div className="flex items-center">
         <button

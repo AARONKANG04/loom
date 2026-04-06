@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { getBackendPort } from "../lib/backend";
+import { getBackendPort, getBackendUrl } from "../lib/backend";
 import { getSetting, setSetting } from "../lib/store";
-import { PROVIDERS, PROVIDER_MODELS, getModelDefByName } from "../lib/models";
+import { PROVIDERS, PROVIDER_MODELS, getModelDefByName, ANTHROPIC_BUDGET_MAP } from "../lib/models";
 
 interface BackendStatus {
   status: string;
@@ -50,8 +50,14 @@ export default function AgentPanel() {
   const [defaultModel, setDefaultModel] = useState("");
   const [showDefaultModelMenu, setShowDefaultModelMenu] = useState(false);
   const [maxTokens, setMaxTokens] = useState(4096);
+  const [temperature, setTemperature] = useState<number | null>(null);
+  const [topP, setTopP] = useState<number | null>(null);
+  const [frequencyPenalty, setFrequencyPenalty] = useState<number | null>(null);
+  const [presencePenalty, setPresencePenalty] = useState<number | null>(null);
   const [backendStatus, setBackendStatus] = useState<BackendStatus | null>(null);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [streaming, setStreaming] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const reasoningRef = useRef<HTMLDivElement>(null);
@@ -62,7 +68,7 @@ export default function AgentPanel() {
   // Load persisted settings on mount
   useEffect(() => {
     (async () => {
-      const [keys, custom, m, em, r, dm, mt, enm, disc] = await Promise.all([
+      const [keys, custom, m, em, r, dm, mt, enm, disc, temp, tp, fp, pp] = await Promise.all([
         getSetting<Record<string, string>>("providerKeys"),
         getSetting<{ name: string; baseUrl: string; apiKey: string }>("customProvider"),
         getSetting<string>("model"),
@@ -72,6 +78,10 @@ export default function AgentPanel() {
         getSetting<number>("maxTokens"),
         getSetting<Record<string, string[]>>("enabledModels"),
         getSetting<{ id: string; name: string }[]>("discoveredModels"),
+        getSetting<number | null>("temperature"),
+        getSetting<number | null>("topP"),
+        getSetting<number | null>("frequencyPenalty"),
+        getSetting<number | null>("presencePenalty"),
       ]);
       if (keys) setProviderKeys(keys);
       if (custom) setCustomProvider(custom);
@@ -82,6 +92,10 @@ export default function AgentPanel() {
       if (mt) setMaxTokens(mt);
       if (enm) setEnabledModels(enm);
       if (disc) setDiscoveredModels(disc);
+      if (temp != null) setTemperature(temp);
+      if (tp != null) setTopP(tp);
+      if (fp != null) setFrequencyPenalty(fp);
+      if (pp != null) setPresencePenalty(pp);
       setSettingsLoaded(true);
     })();
   }, []);
@@ -133,6 +147,26 @@ export default function AgentPanel() {
   }, [maxTokens, settingsLoaded]);
 
   useEffect(() => {
+    if (!settingsLoaded) return;
+    setSetting("temperature", temperature);
+  }, [temperature, settingsLoaded]);
+
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    setSetting("topP", topP);
+  }, [topP, settingsLoaded]);
+
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    setSetting("frequencyPenalty", frequencyPenalty);
+  }, [frequencyPenalty, settingsLoaded]);
+
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    setSetting("presencePenalty", presencePenalty);
+  }, [presencePenalty, settingsLoaded]);
+
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
@@ -163,19 +197,19 @@ export default function AgentPanel() {
   }, [expandedProvider]);
 
   // Compute all enabled models grouped by provider for dropdowns
-  const allEnabledModels: { provider: string; id: string; name: string }[] = [];
+  const allEnabledModels: { provider: string; providerId: string; id: string; name: string }[] = [];
   for (const p of PROVIDERS) {
     const enabled = enabledModels[p.id] || [];
     const models = PROVIDER_MODELS[p.id] || [];
     for (const m of models) {
-      if (enabled.includes(m.id)) allEnabledModels.push({ provider: p.name, id: m.id, name: m.name });
+      if (enabled.includes(m.id)) allEnabledModels.push({ provider: p.name, providerId: p.id, id: m.id, name: m.name });
     }
   }
   // Custom provider models
   const customEnabled = enabledModels["custom"] || [];
   for (const m of discoveredModels) {
     if (customEnabled.includes(m.id)) {
-      allEnabledModels.push({ provider: customProvider.name || "Custom", id: m.id, name: m.name });
+      allEnabledModels.push({ provider: customProvider.name || "Custom", providerId: "custom", id: m.id, name: m.name });
     }
   }
 
@@ -213,18 +247,141 @@ export default function AgentPanel() {
     return () => ws.close();
   }, [showSettings]);
 
-  const handleSend = useCallback(() => {
+  const handleSend = useCallback(async () => {
     const text = input.trim();
-    if (!text) return;
-    setMessages((prev) => [...prev, { role: "user", content: text }]);
+    if (!text || streaming) return;
+
+    const backendUrl = getBackendUrl();
+    if (!backendUrl) {
+      setMessages((prev) => [...prev, { role: "user", content: text }, { role: "agent", content: "Backend is not running." }]);
+      setInput("");
+      return;
+    }
+
+    // Resolve selected model → provider info
+    const selected = allEnabledModels.find((m) => m.name === model);
+    if (!selected) {
+      setMessages((prev) => [...prev, { role: "user", content: text }, { role: "agent", content: "No model selected. Open Settings to configure a provider and enable a model." }]);
+      setInput("");
+      return;
+    }
+
+    const apiKey = selected.providerId === "custom"
+      ? customProvider.apiKey
+      : (providerKeys[selected.providerId] || "");
+
+    // Build reasoning config
+    const modelDef = getModelDefByName(model);
+    let reasoningConfig: { level?: string; budget_tokens?: number } | undefined;
+    if (modelDef) {
+      const rt = modelDef.reasoning.type;
+      if (rt === "levels") {
+        reasoningConfig = { level: reasoning };
+      } else if (rt === "budget" && modelDef.reasoning.type === "budget") {
+        // Use Anthropic budget map if applicable, otherwise pass budget directly
+        const mapped = ANTHROPIC_BUDGET_MAP[reasoning];
+        if (mapped) {
+          reasoningConfig = { budget_tokens: mapped };
+        }
+      }
+    }
+
+    // Build conversation history for the API
+    const apiMessages = messages
+      .map((m) => ({
+        role: m.role === "agent" ? "assistant" as const : "user" as const,
+        content: m.content,
+      }));
+    apiMessages.push({ role: "user", content: text });
+
+    setMessages((prev) => [...prev, { role: "user", content: text }, { role: "agent", content: "" }]);
     setInput("");
-    setTimeout(() => {
-      setMessages((prev) => [
-        ...prev,
-        { role: "agent", content: "Agent support coming soon." },
-      ]);
-    }, 500);
-  }, [input]);
+    setStreaming(true);
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    try {
+      const res = await fetch(`${backendUrl}/v1/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: selected.providerId,
+          model: selected.id,
+          messages: apiMessages,
+          api_key: apiKey,
+          reasoning: reasoningConfig,
+          max_tokens: maxTokens,
+          ...(temperature != null ? { temperature } : {}),
+          ...(topP != null ? { top_p: topP } : {}),
+          ...(frequencyPenalty != null ? { frequency_penalty: frequencyPenalty } : {}),
+          ...(presencePenalty != null ? { presence_penalty: presencePenalty } : {}),
+          stream: true,
+          ...(selected.providerId === "custom" ? { base_url: customProvider.baseUrl } : {}),
+        }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok || !res.body) {
+        const errText = await res.text();
+        setMessages((prev) => {
+          const updated = [...prev];
+          updated[updated.length - 1] = { role: "agent", content: `Error: ${errText}` };
+          return updated;
+        });
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const json = line.slice(6).trim();
+          if (!json) continue;
+
+          try {
+            const event = JSON.parse(json);
+            if (event.type === "content_delta") {
+              setMessages((prev) => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                updated[updated.length - 1] = { ...last, content: last.content + event.text };
+                return updated;
+              });
+            } else if (event.type === "error") {
+              setMessages((prev) => {
+                const updated = [...prev];
+                updated[updated.length - 1] = { role: "agent", content: `Error: ${event.text}` };
+                return updated;
+              });
+            }
+          } catch {
+            // skip malformed SSE lines
+          }
+        }
+      }
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      setMessages((prev) => {
+        const updated = [...prev];
+        updated[updated.length - 1] = { role: "agent", content: `Error: ${err instanceof Error ? err.message : "Unknown error"}` };
+        return updated;
+      });
+    } finally {
+      setStreaming(false);
+      abortRef.current = null;
+    }
+  }, [input, streaming, model, messages, reasoning, maxTokens, allEnabledModels, providerKeys, customProvider]);
 
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -395,6 +552,7 @@ export default function AgentPanel() {
                   medium: "#eab308",
                   high: "#f97316",
                   max: "#ef4444",
+                  xhigh: "#dc2626",
                 };
                 const isCustomModel = !!(model && allEnabledModels.find((m) => m.name === model && m.provider === (customProvider.name || "Custom")));
                 const modelDef = model ? getModelDefByName(model) : undefined;
@@ -552,16 +710,28 @@ export default function AgentPanel() {
                 </button>
               </div>
 
-              {/* Send */}
-              <button
-                onClick={handleSend}
-                className="flex items-center justify-center w-9 h-9 rounded-full cursor-pointer bg-text text-surface hover:opacity-80 ml-1"
-                title="Send"
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 19V5M5 12l7-7 7 7" />
-                </svg>
-              </button>
+              {/* Send / Stop */}
+              {streaming ? (
+                <button
+                  onClick={() => abortRef.current?.abort()}
+                  className="flex items-center justify-center w-9 h-9 rounded-full cursor-pointer bg-red-500 text-white hover:opacity-80 ml-1"
+                  title="Stop"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                    <rect x="4" y="4" width="16" height="16" rx="2" />
+                  </svg>
+                </button>
+              ) : (
+                <button
+                  onClick={handleSend}
+                  className="flex items-center justify-center w-9 h-9 rounded-full cursor-pointer bg-text text-surface hover:opacity-80 ml-1"
+                  title="Send"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 19V5M5 12l7-7 7 7" />
+                  </svg>
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -758,6 +928,11 @@ export default function AgentPanel() {
                                     <span className={`text-[14px] ${enabled ? "text-text font-semibold" : "text-text"}`}>
                                       {m.name}
                                     </span>
+                                    {m.pricing && (
+                                      <span className="text-[12px] text-text-muted ml-auto shrink-0">
+                                        ${m.pricing[0]}/MTok in · ${m.pricing[1]}/MTok out
+                                      </span>
+                                    )}
                                   </button>
                                 );
                               })}
@@ -967,6 +1142,44 @@ export default function AgentPanel() {
                       className="px-3.5 py-2.5 text-[14px] bg-bg border border-border rounded-lg outline-none focus:border-blue-400 text-text"
                     />
                   </div>
+
+                  {/* Sampling Parameters */}
+                  {([
+                    { label: "Temperature", value: temperature, setter: setTemperature, min: 0, max: 2, step: 0.1, desc: "Controls randomness (0 = deterministic, 2 = creative)" },
+                    { label: "Top P", value: topP, setter: setTopP, min: 0, max: 1, step: 0.05, desc: "Nucleus sampling threshold" },
+                    { label: "Frequency Penalty", value: frequencyPenalty, setter: setFrequencyPenalty, min: -2, max: 2, step: 0.1, desc: "Penalize repeated tokens" },
+                    { label: "Presence Penalty", value: presencePenalty, setter: setPresencePenalty, min: -2, max: 2, step: 0.1, desc: "Penalize tokens already present" },
+                  ] as const).map(({ label, value, setter, min, max, step, desc }) => (
+                    <div key={label} className="flex flex-col gap-1.5">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[13px] font-medium text-text">{label}</label>
+                        <div className="flex items-center gap-2">
+                          {value != null && (
+                            <span className="text-[13px] tabular-nums text-text-muted">{value.toFixed(step < 0.1 ? 2 : 1)}</span>
+                          )}
+                          <button
+                            onClick={() => setter(value != null ? null : step < 0.1 ? 1.0 : label.includes("Penalty") ? 0 : 1.0)}
+                            className={`text-[11px] px-1.5 py-0.5 rounded cursor-pointer transition-colors ${value != null ? "text-blue-500 hover:text-blue-600" : "text-text-muted hover:text-text"}`}
+                          >
+                            {value != null ? "Reset" : "Set"}
+                          </button>
+                        </div>
+                      </div>
+                      {value != null ? (
+                        <input
+                          type="range"
+                          min={min}
+                          max={max}
+                          step={step}
+                          value={value}
+                          onChange={(e) => setter(parseFloat(e.target.value))}
+                          className="w-full accent-blue-500"
+                        />
+                      ) : (
+                        <div className="text-[12px] text-text-muted">{desc}</div>
+                      )}
+                    </div>
+                  ))}
 
                   {/* Backend Status */}
                   <div className="flex flex-col gap-3">

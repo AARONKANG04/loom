@@ -93,7 +93,7 @@ function App() {
 
   return (
     <div className="flex flex-col h-full bg-bg text-text font-sans text-[13px]">
-      <TitleBar />
+      <TitleBar onOpenFolder={handleOpenFolder} />
       <div className="flex flex-1 min-h-0">
       <Sidebar
         treeData={treeData}
