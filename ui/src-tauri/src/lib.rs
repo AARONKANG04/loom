@@ -1,6 +1,17 @@
+#[tauri::command]
+fn get_backend_dir() -> String {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR"); // src-tauri/
+    let project_root = std::path::Path::new(manifest_dir)
+        .parent() // ui/
+        .and_then(|p| p.parent()) // loom/
+        .expect("could not resolve project root");
+    project_root.join("backend").to_string_lossy().into_owned()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![get_backend_dir])
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_clipboard_manager::init())

@@ -1,4 +1,12 @@
 import { useState, useCallback, useRef, useEffect } from "react";
+import { getBackendPort } from "../lib/backend";
+
+interface BackendStatus {
+  status: string;
+  uptime_seconds: number;
+  memory_bytes: number;
+  pid: number;
+}
 
 const MIN_WIDTH = 0;
 const MAX_WIDTH = 1200;
@@ -24,6 +32,7 @@ export default function AgentPanel() {
   const [model, setModel] = useState("Claude Sonnet");
   const [showModelMenu, setShowModelMenu] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [backendStatus, setBackendStatus] = useState<BackendStatus | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const reasoningRef = useRef<HTMLDivElement>(null);
@@ -45,6 +54,23 @@ export default function AgentPanel() {
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [showEditMenu, showReasoningMenu, showAddMenu, showModelMenu]);
+
+  useEffect(() => {
+    if (!showSettings) {
+      setBackendStatus(null);
+      return;
+    }
+    const port = getBackendPort();
+    if (!port) return;
+
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/status`);
+    ws.onmessage = (e) => {
+      try { setBackendStatus(JSON.parse(e.data)); } catch { /* ignore */ }
+    };
+    ws.onerror = () => setBackendStatus(null);
+    ws.onclose = () => setBackendStatus(null);
+    return () => ws.close();
+  }, [showSettings]);
 
   const handleSend = useCallback(() => {
     const text = input.trim();
@@ -423,6 +449,39 @@ export default function AgentPanel() {
                     className="px-3.5 py-2.5 text-[14px] bg-bg border border-border rounded-lg outline-none focus:border-blue-400 text-text"
                   />
                 </div>
+              </div>
+
+              {/* Backend Status */}
+              <div className="flex flex-col gap-4">
+                <h3 className="text-[14px] font-semibold text-text border-b border-border pb-2">Backend Status</h3>
+                {backendStatus ? (
+                  <div className="flex flex-col gap-3">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                      <span className="text-[13px] text-green-600 font-medium">Connected</span>
+                      <span className="text-[11px] text-text-muted ml-auto">PID {backendStatus.pid}</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="px-3.5 py-3 bg-bg border border-border rounded-lg">
+                        <div className="text-[11px] text-text-muted mb-0.5">Uptime</div>
+                        <div className="text-[14px] font-medium text-text">
+                          {Math.floor(backendStatus.uptime_seconds / 60)}m {backendStatus.uptime_seconds % 60}s
+                        </div>
+                      </div>
+                      <div className="px-3.5 py-3 bg-bg border border-border rounded-lg">
+                        <div className="text-[11px] text-text-muted mb-0.5">Memory</div>
+                        <div className="text-[14px] font-medium text-text">
+                          {(backendStatus.memory_bytes / 1024 / 1024).toFixed(1)} MB
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-red-400" />
+                    <span className="text-[13px] text-red-500 font-medium">Not connected</span>
+                  </div>
+                )}
               </div>
             </div>
           </div>
