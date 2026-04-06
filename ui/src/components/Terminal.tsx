@@ -8,6 +8,25 @@ const MIN_HEIGHT = 0;
 const MAX_HEIGHT = 600;
 const DEFAULT_HEIGHT = 200;
 
+const XTERM_THEMES = {
+  light: {
+    background: "#f8f8f8",
+    foreground: "#333",
+    cursor: "#333",
+    selectionBackground: "#b5d5ff",
+  },
+  dark: {
+    background: "#1a1a1a",
+    foreground: "#e0e0e0",
+    cursor: "#e0e0e0",
+    selectionBackground: "#264f78",
+  },
+} as const;
+
+function getTheme(): "light" | "dark" {
+  return (document.documentElement.getAttribute("data-theme") as "light" | "dark") || "light";
+}
+
 interface TerminalProps {
   rootPath: string | null;
 }
@@ -32,12 +51,7 @@ export default function Terminal({ rootPath }: TerminalProps) {
       fontFamily: "monospace",
       cursorBlink: true,
       convertEol: true,
-      theme: {
-        background: "#f8f8f8",
-        foreground: "#333",
-        cursor: "#333",
-        selectionBackground: "#b5d5ff",
-      },
+      theme: XTERM_THEMES[getTheme()],
     });
 
     const fitAddon = new FitAddon();
@@ -120,6 +134,16 @@ export default function Terminal({ rootPath }: TerminalProps) {
       fitAddonRef.current?.fit();
     });
     observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // Sync xterm theme with data-theme attribute
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      const t = getTheme();
+      termRef.current?.options && (termRef.current.options.theme = XTERM_THEMES[t]);
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
     return () => observer.disconnect();
   }, []);
 

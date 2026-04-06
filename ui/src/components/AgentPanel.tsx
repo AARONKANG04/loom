@@ -15,7 +15,7 @@ const MAX_WIDTH = 1200;
 const DEFAULT_WIDTH = 420;
 
 type EditMode = "ask" | "auto";
-type SettingsTab = "models" | "general";
+type SettingsTab = "general" | "providers" | "config";
 
 interface Message {
   role: "user" | "agent";
@@ -36,7 +36,8 @@ export default function AgentPanel() {
   const [showModelMenu, setShowModelMenu] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [settingsVisible, setSettingsVisible] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<SettingsTab>("models");
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
+  const [theme, setTheme] = useState<"light" | "dark">("light");
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
   const [displayedProvider, setDisplayedProvider] = useState<string | null>(null);
   const [providerCollapsed, setProviderCollapsed] = useState(false);
@@ -68,7 +69,7 @@ export default function AgentPanel() {
   // Load persisted settings on mount
   useEffect(() => {
     (async () => {
-      const [keys, custom, m, em, r, dm, mt, enm, disc, temp, tp, fp, pp] = await Promise.all([
+      const [keys, custom, m, em, r, dm, mt, enm, disc, temp, tp, fp, pp, th] = await Promise.all([
         getSetting<Record<string, string>>("providerKeys"),
         getSetting<{ name: string; baseUrl: string; apiKey: string }>("customProvider"),
         getSetting<string>("model"),
@@ -82,6 +83,7 @@ export default function AgentPanel() {
         getSetting<number | null>("topP"),
         getSetting<number | null>("frequencyPenalty"),
         getSetting<number | null>("presencePenalty"),
+        getSetting<"light" | "dark">("theme"),
       ]);
       if (keys) setProviderKeys(keys);
       if (custom) setCustomProvider(custom);
@@ -96,6 +98,7 @@ export default function AgentPanel() {
       if (tp != null) setTopP(tp);
       if (fp != null) setFrequencyPenalty(fp);
       if (pp != null) setPresencePenalty(pp);
+      if (th) setTheme(th);
       setSettingsLoaded(true);
     })();
   }, []);
@@ -165,6 +168,12 @@ export default function AgentPanel() {
     if (!settingsLoaded) return;
     setSetting("presencePenalty", presencePenalty);
   }, [presencePenalty, settingsLoaded]);
+
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    setSetting("theme", theme);
+    document.documentElement.setAttribute("data-theme", theme);
+  }, [theme, settingsLoaded]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -423,8 +432,8 @@ export default function AgentPanel() {
         <div className="flex items-center pt-6 pb-2 px-4">
           <div className="flex-1" />
           <div className="flex items-center">
-            <svg width="18" height="18" viewBox="0 0 100 100" fill="none" className="mr-1.5">
-              <path d="M50 5 C70 5, 90 20, 90 45 C90 65, 75 80, 55 75 C38 71, 25 58, 30 42 C34 30, 45 24, 55 30 C62 35, 62 45, 55 50 C50 53, 45 50, 46 46" stroke="#222" strokeWidth="5" strokeLinecap="round" fill="none" />
+            <svg width="18" height="18" viewBox="0 0 100 100" fill="none" className="mr-1.5 text-text">
+              <path d="M50 5 C70 5, 90 20, 90 45 C90 65, 75 80, 55 75 C38 71, 25 58, 30 42 C34 30, 45 24, 55 30 C62 35, 62 45, 55 50 C50 53, 45 50, 46 46" stroke="currentColor" strokeWidth="5" strokeLinecap="round" fill="none" />
             </svg>
             <span className="text-[16px] font-semibold tracking-tight text-text">
               Loom
@@ -448,8 +457,8 @@ export default function AgentPanel() {
         <div className="flex-1 overflow-y-auto flex flex-col">
           {!hasMessages ? (
             <div className="flex-1 flex flex-col items-center justify-center gap-4 px-6">
-              <svg width="48" height="48" viewBox="0 0 100 100" fill="none">
-                <path d="M50 5 C70 5, 90 20, 90 45 C90 65, 75 80, 55 75 C38 71, 25 58, 30 42 C34 30, 45 24, 55 30 C62 35, 62 45, 55 50 C50 53, 45 50, 46 46" stroke="#222" strokeWidth="4" strokeLinecap="round" fill="none" />
+              <svg width="48" height="48" viewBox="0 0 100 100" fill="none" className="text-text-muted">
+                <path d="M50 5 C70 5, 90 20, 90 45 C90 65, 75 80, 55 75 C38 71, 25 58, 30 42 C34 30, 45 24, 55 30 C62 35, 62 45, 55 50 C50 53, 45 50, 46 46" stroke="currentColor" strokeWidth="4" strokeLinecap="round" fill="none" />
               </svg>
               <p className="text-center text-[13px] leading-relaxed text-text-muted">
                 Your AI coding assistant. Ask me to explain, edit, or generate code.
@@ -763,7 +772,7 @@ export default function AgentPanel() {
 
             {/* Tabs */}
             <div className="flex gap-0 px-8 mt-4 border-b border-border">
-              {(["models", "general"] as const).map((tab) => (
+              {(["general", "providers", "config"] as const).map((tab) => (
                 <button
                   key={tab}
                   onClick={() => setSettingsTab(tab)}
@@ -773,14 +782,52 @@ export default function AgentPanel() {
                       : "border-transparent text-text-muted hover:text-text"
                   }`}
                 >
-                  {tab === "models" ? "Models" : "General"}
+                  {tab === "general" ? "General" : tab === "providers" ? "Providers" : "Config"}
                 </button>
               ))}
             </div>
 
             {/* Tab content */}
             <div className="flex-1 overflow-y-auto scrollbar-none px-8 py-6">
-              {settingsTab === "models" ? (
+              {settingsTab === "general" ? (
+                <div className="flex flex-col gap-6">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[13px] font-medium text-text">Theme</label>
+                    <div className="flex gap-3">
+                      {(["light", "dark"] as const).map((t) => (
+                        <button
+                          key={t}
+                          onClick={() => setTheme(t)}
+                          className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl border text-[13px] font-medium cursor-pointer transition-all ${
+                            theme === t
+                              ? "border-blue-400 bg-header text-text ring-1 ring-blue-400/30"
+                              : "border-border bg-bg text-text-muted hover:border-blue-200"
+                          }`}
+                        >
+                          {t === "light" ? (
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <circle cx="12" cy="12" r="5" />
+                              <line x1="12" y1="1" x2="12" y2="3" />
+                              <line x1="12" y1="21" x2="12" y2="23" />
+                              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+                              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+                              <line x1="1" y1="12" x2="3" y2="12" />
+                              <line x1="21" y1="12" x2="23" y2="12" />
+                              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+                              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+                            </svg>
+                          ) : (
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
+                            </svg>
+                          )}
+                          {t === "light" ? "Light" : "Dark"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : settingsTab === "providers" ? (
                 <div className="flex flex-col gap-5">
                   <p className="text-[13px] text-text-muted">
                     Connect an AI provider to start using Loom. Just add your API key.
@@ -797,7 +844,7 @@ export default function AgentPanel() {
                           onClick={() => setExpandedProvider(isExpanded ? null : p.id)}
                           className={`flex items-start gap-3 px-4 py-3.5 rounded-xl border text-left cursor-pointer transition-all ${
                             isExpanded
-                              ? "border-blue-400 bg-blue-50/50 ring-1 ring-blue-100"
+                              ? "border-blue-400 bg-header ring-1 ring-blue-400/30"
                               : "border-border bg-bg hover:border-blue-200"
                           }`}
                         >
@@ -827,7 +874,7 @@ export default function AgentPanel() {
                       onClick={() => setExpandedProvider(expandedProvider === "custom" ? null : "custom")}
                       className={`flex items-start gap-3 px-4 py-3.5 rounded-xl border text-left cursor-pointer transition-all ${
                         expandedProvider === "custom"
-                          ? "border-blue-400 bg-blue-50/50 ring-1 ring-blue-100"
+                          ? "border-blue-400 bg-header ring-1 ring-blue-400/30"
                           : "border-border bg-bg hover:border-blue-200"
                       }`}
                     >
@@ -1077,7 +1124,7 @@ export default function AgentPanel() {
                   </div>
                 </div>
               ) : (
-                /* General tab */
+                /* Config tab */
                 <div className="flex flex-col gap-6">
                   <div className="flex flex-col gap-1.5">
                     <label className="text-[13px] font-medium text-text">Default Model</label>
@@ -1095,7 +1142,7 @@ export default function AgentPanel() {
                         <div className="absolute top-full left-0 right-0 mt-1 bg-surface border border-border rounded-lg shadow-lg py-1 z-30 max-h-[260px] overflow-y-auto">
                           {allEnabledModels.length === 0 ? (
                             <div className="px-3.5 py-3 text-[12px] text-text-muted">
-                              No models enabled. Go to Models tab to configure.
+                              No models enabled. Go to Providers tab to configure.
                             </div>
                           ) : (
                             (() => {
@@ -1134,7 +1181,20 @@ export default function AgentPanel() {
                   </div>
 
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-[13px] font-medium text-text">Max Tokens</label>
+                    <div className="flex items-center gap-2">
+                      <label className="text-[13px] font-medium text-text">Max Tokens</label>
+                      <div className="relative group/tip">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-text-muted cursor-help">
+                          <circle cx="12" cy="12" r="10" />
+                          <line x1="12" y1="16" x2="12" y2="12" />
+                          <line x1="12" y1="8" x2="12.01" y2="8" />
+                        </svg>
+                        <div className="absolute left-full top-1/2 -translate-y-1/2 ml-2 w-56 px-3 py-2 text-[11px] leading-relaxed text-white bg-[#333] rounded-lg shadow-lg opacity-0 invisible group-hover/tip:opacity-100 group-hover/tip:visible transition-all duration-150 pointer-events-none z-50">
+                          Maximum number of tokens the model can generate in a single response. This limits output length only — it does not affect how much context the model can read.
+                          <div className="absolute right-full top-1/2 -translate-y-1/2 border-4 border-transparent border-r-[#333]" />
+                        </div>
+                      </div>
+                    </div>
                     <input
                       type="number"
                       value={maxTokens}
@@ -1144,42 +1204,66 @@ export default function AgentPanel() {
                   </div>
 
                   {/* Sampling Parameters */}
-                  {([
-                    { label: "Temperature", value: temperature, setter: setTemperature, min: 0, max: 2, step: 0.1, desc: "Controls randomness (0 = deterministic, 2 = creative)" },
-                    { label: "Top P", value: topP, setter: setTopP, min: 0, max: 1, step: 0.05, desc: "Nucleus sampling threshold" },
-                    { label: "Frequency Penalty", value: frequencyPenalty, setter: setFrequencyPenalty, min: -2, max: 2, step: 0.1, desc: "Penalize repeated tokens" },
-                    { label: "Presence Penalty", value: presencePenalty, setter: setPresencePenalty, min: -2, max: 2, step: 0.1, desc: "Penalize tokens already present" },
-                  ] as const).map(({ label, value, setter, min, max, step, desc }) => (
-                    <div key={label} className="flex flex-col gap-1.5">
-                      <div className="flex items-center justify-between">
-                        <label className="text-[13px] font-medium text-text">{label}</label>
-                        <div className="flex items-center gap-2">
-                          {value != null && (
-                            <span className="text-[13px] tabular-nums text-text-muted">{value.toFixed(step < 0.1 ? 2 : 1)}</span>
-                          )}
-                          <button
-                            onClick={() => setter(value != null ? null : step < 0.1 ? 1.0 : label.includes("Penalty") ? 0 : 1.0)}
-                            className={`text-[11px] px-1.5 py-0.5 rounded cursor-pointer transition-colors ${value != null ? "text-blue-500 hover:text-blue-600" : "text-text-muted hover:text-text"}`}
-                          >
-                            {value != null ? "Reset" : "Set"}
-                          </button>
-                        </div>
-                      </div>
-                      {value != null ? (
-                        <input
-                          type="range"
-                          min={min}
-                          max={max}
-                          step={step}
-                          value={value}
-                          onChange={(e) => setter(parseFloat(e.target.value))}
-                          className="w-full accent-blue-500"
-                        />
-                      ) : (
-                        <div className="text-[12px] text-text-muted">{desc}</div>
-                      )}
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[13px] font-medium text-text">Sampling</label>
+                    <div className="rounded-xl border border-border">
+                      {([
+                        { label: "Temperature", value: temperature, setter: setTemperature, min: 0, max: 2, step: 0.1, default_: 1.0, desc: "Randomness", tooltip: "Controls how random the model's output is. At 0 the model is fully deterministic, always picking the most likely token. At 2 the output becomes highly creative and unpredictable." },
+                        { label: "Top P", value: topP, setter: setTopP, min: 0, max: 1, step: 0.05, default_: 1.0, desc: "Nucleus sampling", tooltip: "Limits token selection to a cumulative probability. At 0.1 only the top 10% most likely tokens are considered. At 1.0 all tokens are eligible, giving the model full vocabulary access." },
+                        { label: "Frequency Penalty", value: frequencyPenalty, setter: setFrequencyPenalty, min: -2, max: 2, step: 0.1, default_: 0, desc: "Repeated tokens", tooltip: "Penalizes tokens based on how often they've appeared so far. Positive values (up to 2) discourage repetition. Negative values (down to -2) encourage the model to repeat itself." },
+                        { label: "Presence Penalty", value: presencePenalty, setter: setPresencePenalty, min: -2, max: 2, step: 0.1, default_: 0, desc: "Existing tokens", tooltip: "Penalizes tokens that have appeared at all, regardless of frequency. Positive values (up to 2) push the model to introduce new topics. Negative values (down to -2) make it stick to existing topics." },
+                      ] as const).map(({ label, value, setter, min, max, step, default_, desc, tooltip }, i, arr) => {
+                        const active = value != null;
+                        const isFirst = i === 0;
+                        const isLast = i === arr.length - 1;
+                        return (
+                          <div key={label} className={`flex flex-col gap-2.5 px-4 py-3.5 bg-bg ${i > 0 ? "border-t border-border" : ""} ${isFirst ? "rounded-t-xl" : ""} ${isLast ? "rounded-b-xl" : ""}`}>
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <div className="flex flex-col">
+                                  <span className="text-[13px] font-medium text-text">{label}</span>
+                                  <span className="text-[11px] text-text-muted">{desc}</span>
+                                </div>
+                                <div className="relative group/tip">
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-text-muted cursor-help">
+                                    <circle cx="12" cy="12" r="10" />
+                                    <line x1="12" y1="16" x2="12" y2="12" />
+                                    <line x1="12" y1="8" x2="12.01" y2="8" />
+                                  </svg>
+                                  <div className="absolute left-full top-1/2 -translate-y-1/2 ml-2 w-56 px-3 py-2 text-[11px] leading-relaxed text-white bg-[#333] rounded-lg shadow-lg opacity-0 invisible group-hover/tip:opacity-100 group-hover/tip:visible transition-all duration-150 pointer-events-none z-50">
+                                    {tooltip}
+                                    <div className="absolute right-full top-1/2 -translate-y-1/2 border-4 border-transparent border-r-[#333]" />
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                {active && (
+                                  <span className="text-[13px] tabular-nums font-medium text-text">{value.toFixed(step < 0.1 ? 2 : 1)}</span>
+                                )}
+                                <button
+                                  onClick={() => setter(active ? null : default_)}
+                                  className={`relative inline-flex items-center w-9 h-[20px] rounded-full cursor-pointer transition-colors shrink-0 ${active ? "bg-blue-500" : "bg-border"}`}
+                                >
+                                  <span className={`inline-block w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${active ? "translate-x-[18px]" : "translate-x-[2px]"}`} />
+                                </button>
+                              </div>
+                            </div>
+                            {active && (
+                              <input
+                                type="range"
+                                min={min}
+                                max={max}
+                                step={step}
+                                value={value}
+                                onChange={(e) => setter(parseFloat(e.target.value))}
+                                className="w-full accent-blue-500"
+                              />
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
-                  ))}
+                  </div>
 
                   {/* Backend Status */}
                   <div className="flex flex-col gap-3">
